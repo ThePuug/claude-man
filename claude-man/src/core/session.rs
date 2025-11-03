@@ -58,10 +58,74 @@ impl SessionRegistry {
     }
 
     /// Get role-specific context for a session
-    fn get_role_context(_role: Role) -> Option<String> {
-        // TODO: Re-enable when we solve Windows .cmd argument escaping
-        // Context with special characters breaks .cmd file argument parsing
-        None
+    fn get_role_context(role: Role) -> Option<String> {
+        match role {
+            Role::Manager => Some(r#"# MANAGER Role Context
+
+You are a MANAGER session in claude-man. Your job is to orchestrate child sessions to accomplish complex goals.
+
+## Available Commands
+
+Spawn child sessions (returns immediately, runs in background):
+```bash
+claude-man spawn --role DEVELOPER "<task>"
+claude-man spawn --role ARCHITECT "<task>"
+claude-man spawn --role STAKEHOLDER "<task>"
+```
+
+Monitor sessions:
+```bash
+claude-man list                    # List all sessions with status
+claude-man info <session-id>       # Get detailed session info
+claude-man logs <session-id> -n 50 # View last 50 lines of output
+claude-man attach <session-id>     # Stream live output
+```
+
+Stop sessions:
+```bash
+claude-man stop <session-id>
+claude-man stop --all
+```
+
+## Orchestration Pattern
+
+1. Analyze the goal and break it into tasks
+2. Spawn child sessions for parallel work
+3. Monitor with `claude-man list`
+4. Read results with `claude-man logs <id>`
+5. Spawn next wave based on results
+6. Report completion to user
+
+## Example Workflow
+
+```bash
+# Spawn architecture session
+claude-man spawn --role ARCHITECT "Design auth system"
+
+# Wait and check
+claude-man list
+claude-man logs ARCH-001
+
+# Spawn parallel implementation
+claude-man spawn --role DEVELOPER "Implement backend auth"
+claude-man spawn --role DEVELOPER "Implement frontend auth"
+
+# Monitor until complete
+while true; do
+  claude-man list
+  sleep 5
+done
+```
+"#.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Write role context to a markdown file in the session directory
+    fn write_role_context(log_dir: &std::path::Path, context: &str) -> Result<()> {
+        let context_path = log_dir.join("role-context.md");
+        fs::write(&context_path, context)?;
+        Ok(())
     }
 
     /// Load sessions from disk
@@ -190,11 +254,16 @@ impl SessionRegistry {
         // Save metadata to file
         self.save_metadata(&metadata)?;
 
-        // Create spawn configuration with role-specific context
-        let mut config = SpawnConfig::new(task);
-        if let Some(context) = Self::get_role_context(role) {
-            config = config.with_role_context(context);
-        }
+        // Write role-specific context file if applicable
+        let task_with_context = if let Some(context) = Self::get_role_context(role) {
+            Self::write_role_context(&log_dir, &context)?;
+            format!("First, read role-context.md in your working directory for your role instructions. Then: {}", task)
+        } else {
+            task.clone()
+        };
+
+        // Create spawn configuration with working directory set to log dir
+        let config = SpawnConfig::new(task_with_context).with_working_dir(log_dir.clone());
 
         // Spawn the Claude CLI process with stdin support
         let child = spawn_claude_process(config).await?;
@@ -288,11 +357,16 @@ impl SessionRegistry {
         // Save metadata to file
         self.save_metadata(&metadata)?;
 
-        // Create spawn configuration with role-specific context
-        let mut config = SpawnConfig::new(task);
-        if let Some(context) = Self::get_role_context(role) {
-            config = config.with_role_context(context);
-        }
+        // Write role-specific context file if applicable
+        let task_with_context = if let Some(context) = Self::get_role_context(role) {
+            Self::write_role_context(&log_dir, &context)?;
+            format!("First, read role-context.md in your working directory for your role instructions. Then: {}", task)
+        } else {
+            task.clone()
+        };
+
+        // Create spawn configuration with working directory set to log dir
+        let config = SpawnConfig::new(task_with_context).with_working_dir(log_dir.clone());
 
         // Spawn the Claude CLI process with stdin support
         let child = spawn_claude_process(config).await?;
