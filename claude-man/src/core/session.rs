@@ -58,11 +58,10 @@ impl SessionRegistry {
     }
 
     /// Get role-specific context for a session
-    fn get_role_context(role: Role) -> Option<String> {
-        match role {
-            Role::Manager => Some("MANAGER MODE: Use claude-man CLI (spawn, list, logs, input, stop) to orchestrate child sessions.".to_string()),
-            _ => None,
-        }
+    fn get_role_context(_role: Role) -> Option<String> {
+        // TODO: Re-enable when we solve Windows .cmd argument escaping
+        // Context with special characters breaks .cmd file argument parsing
+        None
     }
 
     /// Load sessions from disk

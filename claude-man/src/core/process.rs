@@ -4,7 +4,7 @@
 //! Ensures proper cleanup and prevents orphaned processes.
 
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -88,13 +88,9 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     info!("Spawning Claude CLI process with task: {}", config.task);
 
     // Build the command
-    // On Windows, we need to use cmd.exe to execute .cmd files
+    // On Windows, spawn claude.cmd directly (not via cmd /C) to preserve stdin piping
     #[cfg(target_os = "windows")]
-    let mut cmd = {
-        let mut c = Command::new("cmd");
-        c.args(&["/C", "claude"]);
-        c
-    };
+    let mut cmd = Command::new("claude.cmd");
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = Command::new("claude");
@@ -112,10 +108,11 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     // Add task as argument (with role context if present)
     cmd.arg(&config.full_task());
 
-    // Configure stdio with piped stdin for interactive input
+    // Configure stdio
+    // TODO: Enable piped stdin when we solve Windows cmd.exe stdin passthrough issue
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::piped()); // Enable interactive input
+        .stdin(Stdio::null()); // Temporarily disabled - piped stdin breaks output on Windows
 
     // Spawn the process
     let child = cmd
@@ -153,9 +150,17 @@ pub async fn monitor_process(
         ClaudeManError::Process("Failed to capture stderr".to_string())
     })?;
 
-    let mut stdin = child.stdin.take().ok_or_else(|| {
-        ClaudeManError::Process("Failed to capture stdin".to_string())
-    })?;
+    // Note: stdin is currently null (not piped) due to Windows cmd.exe issues
+    // The stdin channel infrastructure exists but input won't reach the process
+    // TODO: Fix Windows stdin piping to enable interactive input
+
+    // Drain stdin_rx to prevent blocking, but input won't actually be sent
+    tokio::spawn(async move {
+        while stdin_rx.recv().await.is_some() {
+            // Input received but can't be sent (stdin is null)
+            warn!("Input received but stdin is not piped - ignoring");
+        }
+    });
 
     // Create buffered readers
     let stdout_reader = BufReader::new(stdout);
@@ -164,7 +169,7 @@ pub async fn monitor_process(
     let mut stdout_lines = stdout_reader.lines();
     let mut stderr_lines = stderr_reader.lines();
 
-    // Read output lines and handle input concurrently
+    // Read output lines concurrently
     loop {
         tokio::select! {
             result = stdout_lines.next_line() => {
@@ -202,28 +207,6 @@ pub async fn monitor_process(
                     }
                     Err(e) => {
                         error!("Error reading stderr: {}", e);
-                    }
-                }
-            }
-            input = stdin_rx.recv() => {
-                match input {
-                    Some(text) => {
-                        debug!("Sending input to session {}: {}", session_id, text);
-                        // Write input to stdin (with newline)
-                        let input_line = format!("{}\n", text);
-                        if let Err(e) = stdin.write_all(input_line.as_bytes()).await {
-                            error!("Failed to write to stdin: {}", e);
-                        } else if let Err(e) = stdin.flush().await {
-                            error!("Failed to flush stdin: {}", e);
-                        } else {
-                            // Log the input
-                            if let Err(e) = logger.log_input(text) {
-                                warn!("Failed to log input: {}", e);
-                            }
-                        }
-                    }
-                    None => {
-                        debug!("Stdin channel closed for session {}", session_id);
                     }
                 }
             }
