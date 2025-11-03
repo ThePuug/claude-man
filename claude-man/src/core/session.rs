@@ -57,80 +57,29 @@ impl SessionRegistry {
         }
     }
 
-    /// Get role-specific context for a session
+    /// Get role-specific context for a session by reading from ROLES/ directory
     fn get_role_context(role: Role) -> Option<String> {
-        match role {
-            Role::Manager => Some(r#"# MANAGER Role Context
+        use std::path::Path;
 
-You are a MANAGER session in claude-man. Your job is to orchestrate child sessions to accomplish complex goals.
+        // Try to find role file in ROLES/ directory (project root or parent directories)
+        let role_filename = format!("{}.md", role.to_string().to_uppercase());
 
-## Setup
+        // Search in current dir, parent, grandparent for ROLES/ directory
+        let search_paths = vec![
+            Path::new("ROLES").join(&role_filename),
+            Path::new("../ROLES").join(&role_filename),
+            Path::new("../../ROLES").join(&role_filename),
+        ];
 
-If claude-man commands require approval, run this once:
-```bash
-claude-man init  # Sets up auto-approval for orchestration
-```
-
-## Available Commands
-
-Spawn child sessions (returns immediately, runs in background):
-```bash
-claude-man spawn --role DEVELOPER "<task>"
-claude-man spawn --role ARCHITECT "<task>"
-claude-man spawn --role STAKEHOLDER "<task>"
-```
-
-Resume sessions with additional input (use this for interactive workflows):
-```bash
-claude-man resume <session-id> "<message or input>"
-```
-
-Monitor sessions:
-```bash
-claude-man list                    # List all sessions with status
-claude-man info <session-id>       # Get detailed session info
-claude-man logs <session-id> -n 50 # View last 50 lines of output
-claude-man attach <session-id>     # Stream live output
-```
-
-Stop sessions:
-```bash
-claude-man stop <session-id>
-claude-man stop --all
-```
-
-## Orchestration Pattern
-
-1. Analyze the goal and break it into tasks
-2. Spawn child sessions for parallel work
-3. Monitor with `claude-man list`
-4. Read results with `claude-man logs <id>`
-5. Spawn next wave based on results
-6. Report completion to user
-
-## Example Workflow
-
-```bash
-# Spawn architecture session
-claude-man spawn --role ARCHITECT "Design auth system"
-
-# Wait and check
-claude-man list
-claude-man logs ARCH-001
-
-# Spawn parallel implementation
-claude-man spawn --role DEVELOPER "Implement backend auth"
-claude-man spawn --role DEVELOPER "Implement frontend auth"
-
-# Monitor until complete
-while true; do
-  claude-man list
-  sleep 5
-done
-```
-"#.to_string()),
-            _ => None,
+        for path in search_paths {
+            if let Ok(content) = fs::read_to_string(&path) {
+                info!("Loaded role context from {:?}", path);
+                return Some(content);
+            }
         }
+
+        warn!("No role context file found for role: {}", role);
+        None
     }
 
     /// Write role context to a markdown file in the session directory
