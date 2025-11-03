@@ -163,6 +163,15 @@ impl DaemonServer {
                 }
             }
 
+            DaemonRequest::Resume { session_id, message } => {
+                let session_id = SessionId::from_string(session_id);
+
+                match registry.resume_session(session_id, message).await {
+                    Ok(_) => DaemonResponse::ok_with_message("Session resumed".to_string()),
+                    Err(e) => DaemonResponse::error(format!("Failed to resume session: {}", e)),
+                }
+            }
+
             DaemonRequest::List => {
                 let sessions = registry.list_sessions().await;
                 DaemonResponse::sessions(sessions)

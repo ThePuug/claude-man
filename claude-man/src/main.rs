@@ -35,6 +35,15 @@ enum Commands {
         task: String,
     },
 
+    /// Resume an existing Claude session with additional input
+    Resume {
+        /// Session ID to resume
+        session_id: String,
+
+        /// Additional message/input to provide
+        message: String,
+    },
+
     /// List all active sessions
     List,
 
@@ -186,6 +195,28 @@ async fn run_with_daemon(cli: Cli, client: DaemonClient) -> Result<()> {
             }
         }
 
+        Some(Commands::Resume { session_id, message }) => {
+            match client.resume(session_id.clone(), message).await {
+                Ok(response) => {
+                    use claude_man::daemon::DaemonResponse;
+                    match response {
+                        DaemonResponse::Ok { message: Some(msg), .. } => {
+                            println!("✓ {}", msg);
+                        }
+                        DaemonResponse::Error { message } => {
+                            eprintln!("Error: {}", message);
+                            std::process::exit(1);
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         Some(Commands::List) => {
             match client.list().await {
                 Ok(response) => {
@@ -312,7 +343,12 @@ async fn run_without_daemon(cli: Cli) -> Result<()> {
         Some(Commands::Spawn { role, task }) => {
             let role = role.parse::<Role>()?;
             commands::spawn_session(registry.clone(), role, task).await?;
-            // Session now runs in background - return immediately
+        }
+
+        Some(Commands::Resume { session_id, message }) => {
+            let session_id = SessionId::from_string(session_id);
+            registry.resume_session(session_id, message).await?;
+            println!("✓ Session resumed");
         }
 
         Some(Commands::List) => {

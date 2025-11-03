@@ -13,6 +13,12 @@ pub enum DaemonRequest {
         task: String,
     },
 
+    /// Resume an existing session with additional input
+    Resume {
+        session_id: String,
+        message: String,
+    },
+
     /// List all active sessions
     List,
 

@@ -58,6 +58,11 @@ impl DaemonClient {
         self.send_request(DaemonRequest::Spawn { role, task }).await
     }
 
+    /// Resume a session
+    pub async fn resume(&self, session_id: String, message: String) -> Result<DaemonResponse> {
+        self.send_request(DaemonRequest::Resume { session_id, message }).await
+    }
+
     /// List sessions
     pub async fn list(&self) -> Result<DaemonResponse> {
         self.send_request(DaemonRequest::List).await

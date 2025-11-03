@@ -73,6 +73,11 @@ claude-man spawn --role ARCHITECT "<task>"
 claude-man spawn --role STAKEHOLDER "<task>"
 ```
 
+Resume sessions with additional input (use this for interactive workflows):
+```bash
+claude-man resume <session-id> "<message or input>"
+```
+
 Monitor sessions:
 ```bash
 claude-man list                    # List all sessions with status
@@ -415,6 +420,55 @@ done
         info!("Child session {} started successfully", session_id);
 
         Ok(session_id)
+    }
+
+    /// Resume an existing session with additional input
+    ///
+    /// Uses Claude's --resume flag to continue a session
+    pub async fn resume_session(
+        &self,
+        session_id: SessionId,
+        message: String,
+    ) -> Result<()> {
+        info!("Resuming session {} with message", session_id);
+
+        // Get existing session metadata
+        let metadata = self
+            .get_session(&session_id)
+            .await
+            .ok_or_else(|| ClaudeManError::SessionNotFound(session_id.to_string()))?;
+
+        let log_dir = &metadata.log_dir;
+
+        // Create logger (will append to existing log)
+        let mut logger = SessionLogger::new(session_id.clone(), log_dir)?;
+
+        // Log that we're resuming
+        logger.log_lifecycle(
+            crate::types::SessionStatus::Running,
+            format!("Resuming session with message: {}", message),
+        )?;
+
+        // Create spawn config for resume
+        let config = SpawnConfig::new(format!("--resume {} {}", session_id, message));
+
+        // Spawn the resume process
+        let child = spawn_claude_process(config).await?;
+        let pid = child.id().ok_or_else(|| {
+            ClaudeManError::Process("Failed to get process ID".to_string())
+        })?;
+
+        info!("Resume process started with PID {}", pid);
+
+        // Create stdin channel (unused but required for monitor_process signature)
+        let (_stdin_tx, stdin_rx) = mpsc::unbounded_channel::<String>();
+
+        // Monitor the resume process (this blocks until complete)
+        let exit_code = monitor_process(child, session_id.clone(), logger, stdin_rx).await?;
+
+        info!("Resume process completed with exit code: {}", exit_code);
+
+        Ok(())
     }
 
     /// Get a list of all active sessions
