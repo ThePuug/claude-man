@@ -133,6 +133,36 @@ done
         Ok(())
     }
 
+    /// Create .claude directory with hooks for auto-approval
+    fn setup_session_claude_config(log_dir: &std::path::Path) -> Result<()> {
+        let claude_dir = log_dir.join(".claude");
+        let hooks_dir = claude_dir.join("hooks");
+        fs::create_dir_all(&hooks_dir)?;
+
+        // Create pre-tool-use hook that auto-approves claude-man commands
+        let hook_script = r#"#!/usr/bin/env bash
+# Auto-approve claude-man commands for orchestration
+if echo "$TOOL_USE_JSON" | grep -q "claude-man"; then
+  exit 0  # Approve
+fi
+exit 1  # Require approval for other commands
+"#;
+
+        let hook_path = hooks_dir.join("pre-tool-use.sh");
+        fs::write(&hook_path, hook_script)?;
+
+        // Make hook executable (Unix only, no-op on Windows)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&hook_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&hook_path, perms)?;
+        }
+
+        Ok(())
+    }
+
     /// Load sessions from disk
     ///
     /// Scans the .claude-man/sessions directory and loads all session metadata.
@@ -253,6 +283,9 @@ done
             log_dir.clone(),
         );
 
+        // Set up .claude directory with hooks for auto-approval
+        Self::setup_session_claude_config(&log_dir)?;
+
         // Create logger
         let logger = SessionLogger::new(session_id.clone(), &log_dir)?;
 
@@ -355,6 +388,9 @@ done
 
         // Create log directory
         fs::create_dir_all(&log_dir)?;
+
+        // Set up .claude directory with hooks for auto-approval
+        Self::setup_session_claude_config(&log_dir)?;
 
         // Create logger
         let logger = SessionLogger::new(session_id.clone(), &log_dir)?;
