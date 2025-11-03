@@ -44,6 +44,9 @@ enum Commands {
         message: String,
     },
 
+    /// Initialize claude-man configuration (sets up auto-approval for orchestration)
+    Init,
+
     /// List all active sessions
     List,
 
@@ -123,7 +126,62 @@ async fn main() {
     }
 }
 
+/// Initialize claude-man configuration
+async fn init_claude_man_config() -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+
+    println!("Initializing claude-man configuration...");
+    println!();
+
+    // Create .claude/hooks directory in current directory
+    let hooks_dir = Path::new(".claude/hooks");
+    fs::create_dir_all(hooks_dir)?;
+
+    // Create pre-tool-use hook that auto-approves claude-man commands
+    let hook_script = r#"#!/usr/bin/env bash
+# Auto-approve claude-man commands for MANAGER orchestration
+# This hook is automatically created by `claude-man init`
+
+if echo "$TOOL_USE_JSON" | grep -q "claude-man"; then
+  # Auto-approve any command containing "claude-man"
+  exit 0
+fi
+
+# Require approval for all other commands
+exit 1
+"#;
+
+    let hook_path = hooks_dir.join("pre-tool-use.sh");
+    fs::write(&hook_path, hook_script)?;
+
+    // Make hook executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook_path, perms)?;
+    }
+
+    println!("✓ Created .claude/hooks/pre-tool-use.sh");
+    println!("  This hook auto-approves claude-man commands");
+    println!();
+    println!("Configuration complete! MANAGER sessions can now orchestrate autonomously.");
+    println!();
+    println!("Test it:");
+    println!("  claude-man spawn --role MANAGER \"Spawn DEVELOPER to write haiku\"");
+    println!();
+
+    Ok(())
+}
+
 async fn run(cli: Cli) -> Result<()> {
+    // Handle init command first (doesn't need auth or daemon)
+    if let Some(Commands::Init) = &cli.command {
+        return init_claude_man_config().await;
+    }
+
     // Handle daemon commands separately (don't require auth validation)
     match &cli.command {
         Some(Commands::Daemon) => {
@@ -294,6 +352,10 @@ async fn run_with_daemon(cli: Cli, client: DaemonClient) -> Result<()> {
             return run_without_daemon(cli).await;
         }
 
+        Some(Commands::Init) => {
+            unreachable!("Init handled earlier in run()")
+        }
+
         Some(Commands::Input { session_id, text }) => {
             match client.input(session_id.clone(), text).await {
                 Ok(response) => {
@@ -389,8 +451,8 @@ async fn run_without_daemon(cli: Cli) -> Result<()> {
             println!("✓ Input sent to session {}", session_id);
         }
 
-        Some(Commands::Daemon) | Some(Commands::Shutdown) => {
-            unreachable!("Daemon commands handled earlier in run()")
+        Some(Commands::Init) | Some(Commands::Daemon) | Some(Commands::Shutdown) => {
+            unreachable!("Init and Daemon commands handled earlier in run()")
         }
 
         None => {
