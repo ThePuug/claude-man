@@ -134,42 +134,33 @@ async fn init_claude_man_config() -> Result<()> {
     println!("Initializing claude-man configuration...");
     println!();
 
-    // Create .claude/hooks directory in current directory
-    let hooks_dir = Path::new(".claude/hooks");
-    fs::create_dir_all(hooks_dir)?;
+    // Create .claude directory in current directory
+    let claude_dir = Path::new(".claude");
+    fs::create_dir_all(claude_dir)?;
 
-    // Create pre-tool-use hook that auto-approves claude-man commands
-    let hook_script = r#"#!/usr/bin/env bash
-# Auto-approve claude-man commands for MANAGER orchestration
-# This hook is automatically created by `claude-man init`
+    // Create settings.json with pre-tool-use hook configuration
+    let settings = serde_json::json!({
+        "hooks": {
+            "preToolUse": [{
+                "matcher": "Bash",
+                "command": "#!/usr/bin/env bash\n# Auto-approve claude-man commands\nread -r input\nif echo \"$input\" | grep -q '\"command\":.*claude-man'; then\n  exit 0  # Approve\nfi\nexit 1  # Deny"
+            }]
+        },
+        "alwaysThinkingEnabled": true,
+        "model": "sonnet[1m]"
+    });
 
-if echo "$TOOL_USE_JSON" | grep -q "claude-man"; then
-  # Auto-approve any command containing "claude-man"
-  exit 0
-fi
+    let settings_path = claude_dir.join("settings.local.json");
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
-# Require approval for all other commands
-exit 1
-"#;
-
-    let hook_path = hooks_dir.join("pre-tool-use.sh");
-    fs::write(&hook_path, hook_script)?;
-
-    // Make hook executable on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&hook_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&hook_path, perms)?;
-    }
-
-    println!("✓ Created .claude/hooks/pre-tool-use.sh");
-    println!("  This hook auto-approves claude-man commands");
+    println!("✓ Created .claude/settings.local.json");
+    println!("  Configured preToolUse hook for Bash commands");
+    println!("  Auto-approves commands containing 'claude-man'");
     println!();
     println!("Configuration complete! MANAGER sessions can now orchestrate autonomously.");
     println!();
     println!("Test it:");
+    println!("  claude-man daemon &");
     println!("  claude-man spawn --role MANAGER \"Spawn DEVELOPER to write haiku\"");
     println!();
 

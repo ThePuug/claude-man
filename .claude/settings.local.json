@@ -1,0 +1,12 @@
+{
+  "alwaysThinkingEnabled": true,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "#!/usr/bin/env bash\n# Auto-approve claude-man commands\nread -r input\nif echo \"$input\" | grep -q '\"command\":.*claude-man'; then\n  exit 0  # Approve\nfi\nexit 1  # Deny",
+        "matcher": "Bash"
+      }
+    ]
+  },
+  "model": "sonnet[1m]"
+}
