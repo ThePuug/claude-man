@@ -4,8 +4,9 @@
 //! Ensures proper cleanup and prevents orphaned processes.
 
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 #[cfg(unix)]
@@ -56,7 +57,7 @@ impl SpawnConfig {
     }
 }
 
-/// Spawns a Claude CLI process
+/// Spawns a Claude CLI process with stdin support
 ///
 /// # Arguments
 ///
@@ -64,7 +65,7 @@ impl SpawnConfig {
 ///
 /// # Returns
 ///
-/// The spawned child process
+/// The spawned child process with piped stdin
 pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     info!("Spawning Claude CLI process with task: {}", config.task);
 
@@ -93,10 +94,10 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     // Add task as argument
     cmd.arg(&config.task);
 
-    // Configure stdio
+    // Configure stdio with piped stdin for interactive input
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null()); // Phase 1: no interactive input
+        .stdin(Stdio::piped()); // Enable interactive input
 
     // Spawn the process
     let child = cmd
@@ -111,11 +112,13 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
 /// Monitors a child process and logs its output
 ///
 /// Reads stdout and stderr from the child process and logs to the session logger.
+/// Handles stdin input from a channel.
 /// Blocks until the process exits.
 pub async fn monitor_process(
     mut child: Child,
     session_id: SessionId,
     mut logger: SessionLogger,
+    mut stdin_rx: mpsc::UnboundedReceiver<String>,
 ) -> Result<i32> {
     let pid = child.id().unwrap_or(0);
     info!("Monitoring process {} for session {}", pid, session_id);
@@ -123,13 +126,17 @@ pub async fn monitor_process(
     // Log that the session has started
     logger.log_lifecycle(SessionStatus::Running, format!("Session started (PID: {})", pid))?;
 
-    // Get stdout and stderr handles
+    // Get stdout, stderr, and stdin handles
     let stdout = child.stdout.take().ok_or_else(|| {
         ClaudeManError::Process("Failed to capture stdout".to_string())
     })?;
 
     let stderr = child.stderr.take().ok_or_else(|| {
         ClaudeManError::Process("Failed to capture stderr".to_string())
+    })?;
+
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        ClaudeManError::Process("Failed to capture stdin".to_string())
     })?;
 
     // Create buffered readers
@@ -139,7 +146,7 @@ pub async fn monitor_process(
     let mut stdout_lines = stdout_reader.lines();
     let mut stderr_lines = stderr_reader.lines();
 
-    // Read output lines concurrently
+    // Read output lines and handle input concurrently
     loop {
         tokio::select! {
             result = stdout_lines.next_line() => {
@@ -177,6 +184,28 @@ pub async fn monitor_process(
                     }
                     Err(e) => {
                         error!("Error reading stderr: {}", e);
+                    }
+                }
+            }
+            input = stdin_rx.recv() => {
+                match input {
+                    Some(text) => {
+                        debug!("Sending input to session {}: {}", session_id, text);
+                        // Write input to stdin (with newline)
+                        let input_line = format!("{}\n", text);
+                        if let Err(e) = stdin.write_all(input_line.as_bytes()).await {
+                            error!("Failed to write to stdin: {}", e);
+                        } else if let Err(e) = stdin.flush().await {
+                            error!("Failed to flush stdin: {}", e);
+                        } else {
+                            // Log the input
+                            if let Err(e) = logger.log_input(text) {
+                                warn!("Failed to log input: {}", e);
+                            }
+                        }
+                    }
+                    None => {
+                        debug!("Stdin channel closed for session {}", session_id);
                     }
                 }
             }

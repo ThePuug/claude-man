@@ -209,6 +209,15 @@ impl DaemonServer {
                 DaemonResponse::ok_with_message(format!("Attaching to session {}", session_id))
             }
 
+            DaemonRequest::Input { session_id, text } => {
+                let session_id = SessionId::from_string(session_id);
+
+                match registry.send_input(&session_id, text).await {
+                    Ok(_) => DaemonResponse::ok_with_message(format!("Input sent to session {}", session_id)),
+                    Err(e) => DaemonResponse::error(format!("Failed to send input: {}", e)),
+                }
+            }
+
             DaemonRequest::Shutdown => {
                 info!("Shutdown requested");
                 let mut s = shutdown.write().await;

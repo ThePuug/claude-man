@@ -34,6 +34,12 @@ pub enum DaemonRequest {
         session_id: String,
     },
 
+    /// Send input to a running session
+    Input {
+        session_id: String,
+        text: String,
+    },
+
     /// Shutdown the daemon
     Shutdown,
 

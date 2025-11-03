@@ -75,6 +75,15 @@ enum Commands {
         session_id: String,
     },
 
+    /// Send input to a running session
+    Input {
+        /// Session ID
+        session_id: String,
+
+        /// Input text to send
+        text: String,
+    },
+
     /// Start the daemon server
     Daemon,
 
@@ -254,6 +263,28 @@ async fn run_with_daemon(cli: Cli, client: DaemonClient) -> Result<()> {
             return run_without_daemon(cli).await;
         }
 
+        Some(Commands::Input { session_id, text }) => {
+            match client.input(session_id.clone(), text).await {
+                Ok(response) => {
+                    use claude_man::daemon::DaemonResponse;
+                    match response {
+                        DaemonResponse::Ok { message: Some(msg), .. } => {
+                            println!("✓ {}", msg);
+                        }
+                        DaemonResponse::Error { message } => {
+                            eprintln!("Error: {}", message);
+                            std::process::exit(1);
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         Some(Commands::Daemon) | Some(Commands::Shutdown) => {
             unreachable!("Handled above")
         }
@@ -314,6 +345,12 @@ async fn run_without_daemon(cli: Cli) -> Result<()> {
         Some(Commands::Attach { session_id }) => {
             let session_id = SessionId::from_string(session_id);
             commands::attach_session(registry.clone(), session_id).await?;
+        }
+
+        Some(Commands::Input { session_id, text }) => {
+            let session_id = SessionId::from_string(session_id);
+            registry.send_input(&session_id, text).await?;
+            println!("✓ Input sent to session {}", session_id);
         }
 
         Some(Commands::Daemon) | Some(Commands::Shutdown) => {

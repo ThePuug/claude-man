@@ -78,6 +78,11 @@ impl DaemonClient {
         self.send_request(DaemonRequest::StopAll).await
     }
 
+    /// Send input to a running session
+    pub async fn input(&self, session_id: String, text: String) -> Result<DaemonResponse> {
+        self.send_request(DaemonRequest::Input { session_id, text }).await
+    }
+
     /// Shutdown the daemon
     pub async fn shutdown(&self) -> Result<DaemonResponse> {
         self.send_request(DaemonRequest::Shutdown).await

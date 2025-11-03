@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
@@ -23,6 +24,9 @@ pub struct SessionHandle {
 
     /// Handle to the monitoring task
     pub task_handle: Option<JoinHandle<Result<i32>>>,
+
+    /// Channel for sending input to the session's stdin
+    pub stdin_tx: Option<mpsc::UnboundedSender<String>>,
 }
 
 impl SessionHandle {
@@ -91,9 +95,11 @@ impl SessionRegistry {
                             info!("Loaded session {} (PID: {})", metadata.id, pid);
 
                             // Create handle without monitoring task (process already running)
+                            // Note: stdin_tx is None for recovered sessions (can't attach to existing process stdin)
                             let handle = SessionHandle {
                                 metadata,
                                 task_handle: None,
+                                stdin_tx: None,
                             };
 
                             let mut sessions = self.sessions.write().await;
@@ -180,7 +186,7 @@ impl SessionRegistry {
         // Create spawn configuration
         let config = SpawnConfig::new(task);
 
-        // Spawn the Claude CLI process
+        // Spawn the Claude CLI process with stdin support
         let child = spawn_claude_process(config).await?;
         let pid = child.id().ok_or_else(|| {
             ClaudeManError::Process("Failed to get process ID".to_string())
@@ -190,12 +196,15 @@ impl SessionRegistry {
         metadata.mark_started(pid);
         self.save_metadata(&metadata)?;
 
+        // Create stdin channel for sending input to the session
+        let (stdin_tx, stdin_rx) = mpsc::unbounded_channel::<String>();
+
         // Spawn monitoring task with registry access for metadata updates
         let session_id_clone = session_id.clone();
         let sessions_for_task = self.sessions.clone();
 
         let task_handle = tokio::spawn(async move {
-            let exit_code = monitor_process(child, session_id_clone.clone(), logger).await;
+            let exit_code = monitor_process(child, session_id_clone.clone(), logger, stdin_rx).await;
 
             // Update metadata in registry based on exit code
             let mut sessions = sessions_for_task.write().await;
@@ -210,10 +219,11 @@ impl SessionRegistry {
             exit_code
         });
 
-        // Create session handle
+        // Create session handle with stdin sender
         let handle = SessionHandle {
             metadata,
             task_handle: Some(task_handle),
+            stdin_tx: Some(stdin_tx),
         };
 
         // Add to registry
@@ -238,6 +248,43 @@ impl SessionRegistry {
     pub async fn get_session(&self, session_id: &SessionId) -> Option<SessionMetadata> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).map(|handle| handle.metadata.clone())
+    }
+
+    /// Send input to a running session
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The ID of the session
+    /// * `input` - The input text to send
+    pub async fn send_input(&self, session_id: &SessionId, input: String) -> Result<()> {
+        info!("Sending input to session {}: {}", session_id, input);
+
+        let sessions = self.sessions.read().await;
+
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| ClaudeManError::SessionNotFound(session_id.to_string()))?;
+
+        // Check if session is still active
+        if !handle.metadata.is_active() {
+            return Err(ClaudeManError::InvalidInput(format!(
+                "Session {} is not active (status: {})",
+                session_id, handle.metadata.status
+            )));
+        }
+
+        // Send input through the channel
+        if let Some(stdin_tx) = &handle.stdin_tx {
+            stdin_tx
+                .send(input)
+                .map_err(|_| ClaudeManError::Process("Failed to send input: channel closed".to_string()))?;
+        } else {
+            return Err(ClaudeManError::Process(
+                "Session stdin channel not available".to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Stop a specific session
