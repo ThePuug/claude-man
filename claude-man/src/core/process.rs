@@ -77,6 +77,9 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     #[cfg(not(target_os = "windows"))]
     let mut cmd = Command::new("claude");
 
+    // Add flag to skip permissions (enables autonomous orchestration)
+    cmd.arg("--dangerously-skip-permissions");
+
     // Add additional environment variables
     for (key, value) in &config.env_vars {
         cmd.env(key, value);
