@@ -32,6 +32,9 @@ pub struct SpawnConfig {
 
     /// Working directory for the process
     pub working_dir: Option<std::path::PathBuf>,
+
+    /// Role-specific context to prepend to task
+    pub role_context: Option<String>,
 }
 
 impl SpawnConfig {
@@ -41,6 +44,7 @@ impl SpawnConfig {
             task,
             env_vars: Vec::new(),
             working_dir: None,
+            role_context: None,
         }
     }
 
@@ -54,6 +58,20 @@ impl SpawnConfig {
     pub fn with_working_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.working_dir = Some(dir);
         self
+    }
+
+    /// Add role-specific context
+    pub fn with_role_context(mut self, context: String) -> Self {
+        self.role_context = Some(context);
+        self
+    }
+
+    /// Get the full task with role context prepended
+    pub fn full_task(&self) -> String {
+        match &self.role_context {
+            Some(context) => format!("{}\n\n{}", context, self.task),
+            None => self.task.clone(),
+        }
     }
 }
 
@@ -82,17 +100,17 @@ pub async fn spawn_claude_process(config: SpawnConfig) -> Result<Child> {
     let mut cmd = Command::new("claude");
 
     // Add additional environment variables
-    for (key, value) in config.env_vars {
+    for (key, value) in &config.env_vars {
         cmd.env(key, value);
     }
 
     // Set working directory if specified
-    if let Some(dir) = config.working_dir {
+    if let Some(ref dir) = config.working_dir {
         cmd.current_dir(dir);
     }
 
-    // Add task as argument
-    cmd.arg(&config.task);
+    // Add task as argument (with role context if present)
+    cmd.arg(&config.full_task());
 
     // Configure stdio with piped stdin for interactive input
     cmd.stdout(Stdio::piped())

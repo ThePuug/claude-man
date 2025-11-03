@@ -83,6 +83,10 @@ pub struct SessionMetadata {
     /// Task description provided when session was created
     pub task: String,
 
+    /// Parent session ID (if this session was spawned by another session)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<SessionId>,
+
     /// When the session was created
     pub created_at: DateTime<Utc>,
 
@@ -107,6 +111,29 @@ impl SessionMetadata {
             role,
             status: SessionStatus::Created,
             task,
+            parent_id: None,
+            created_at: Utc::now(),
+            started_at: None,
+            ended_at: None,
+            pid: None,
+            log_dir,
+        }
+    }
+
+    /// Create new child session metadata with a parent
+    pub fn new_child(
+        id: SessionId,
+        role: Role,
+        task: String,
+        log_dir: PathBuf,
+        parent_id: SessionId,
+    ) -> Self {
+        Self {
+            id,
+            role,
+            status: SessionStatus::Created,
+            task,
+            parent_id: Some(parent_id),
             created_at: Utc::now(),
             started_at: None,
             ended_at: None,

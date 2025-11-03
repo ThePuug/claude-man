@@ -57,6 +57,14 @@ impl SessionRegistry {
         }
     }
 
+    /// Get role-specific context for a session
+    fn get_role_context(role: Role) -> Option<String> {
+        match role {
+            Role::Manager => Some("MANAGER MODE: Use claude-man CLI (spawn, list, logs, input, stop) to orchestrate child sessions.".to_string()),
+            _ => None,
+        }
+    }
+
     /// Load sessions from disk
     ///
     /// Scans the .claude-man/sessions directory and loads all session metadata.
@@ -183,8 +191,11 @@ impl SessionRegistry {
         // Save metadata to file
         self.save_metadata(&metadata)?;
 
-        // Create spawn configuration
-        let config = SpawnConfig::new(task);
+        // Create spawn configuration with role-specific context
+        let mut config = SpawnConfig::new(task);
+        if let Some(context) = Self::get_role_context(role) {
+            config = config.with_role_context(context);
+        }
 
         // Spawn the Claude CLI process with stdin support
         let child = spawn_claude_process(config).await?;
@@ -235,11 +246,121 @@ impl SessionRegistry {
         Ok(session_id)
     }
 
+    /// Spawn a child session with a parent
+    ///
+    /// Creates a new session as a child of an existing parent session.
+    pub async fn spawn_child_session(
+        &self,
+        parent_id: SessionId,
+        role: Role,
+        task: String,
+    ) -> Result<SessionId> {
+        // Verify parent session exists
+        if self.get_session(&parent_id).await.is_none() {
+            return Err(ClaudeManError::SessionNotFound(format!(
+                "Parent session not found: {}",
+                parent_id
+            )));
+        }
+
+        let session_id = self.next_session_id(role).await;
+        let log_dir = session_log_dir(&session_id);
+
+        info!(
+            "Spawning child session {} with role {:?} (parent: {})",
+            session_id, role, parent_id
+        );
+
+        // Create session metadata with parent
+        let mut metadata = SessionMetadata::new_child(
+            session_id.clone(),
+            role,
+            task.clone(),
+            log_dir.clone(),
+            parent_id,
+        );
+
+        // Create log directory
+        fs::create_dir_all(&log_dir)?;
+
+        // Create logger
+        let logger = SessionLogger::new(session_id.clone(), &log_dir)?;
+
+        // Save metadata to file
+        self.save_metadata(&metadata)?;
+
+        // Create spawn configuration with role-specific context
+        let mut config = SpawnConfig::new(task);
+        if let Some(context) = Self::get_role_context(role) {
+            config = config.with_role_context(context);
+        }
+
+        // Spawn the Claude CLI process with stdin support
+        let child = spawn_claude_process(config).await?;
+        let pid = child.id().ok_or_else(|| {
+            ClaudeManError::Process("Failed to get process ID".to_string())
+        })?;
+
+        // Update metadata with PID
+        metadata.mark_started(pid);
+        self.save_metadata(&metadata)?;
+
+        // Create stdin channel for sending input to the session
+        let (stdin_tx, stdin_rx) = mpsc::unbounded_channel::<String>();
+
+        // Spawn monitoring task with registry access for metadata updates
+        let session_id_clone = session_id.clone();
+        let sessions_for_task = self.sessions.clone();
+
+        let task_handle = tokio::spawn(async move {
+            let exit_code = monitor_process(child, session_id_clone.clone(), logger, stdin_rx).await;
+
+            // Update metadata in registry based on exit code
+            let mut sessions = sessions_for_task.write().await;
+            if let Some(handle) = sessions.get_mut(&session_id_clone) {
+                match exit_code {
+                    Ok(0) => handle.metadata.mark_completed(),
+                    Ok(_) => handle.metadata.mark_failed(),
+                    Err(_) => handle.metadata.mark_failed(),
+                }
+            }
+
+            exit_code
+        });
+
+        // Create session handle with stdin sender
+        let handle = SessionHandle {
+            metadata,
+            task_handle: Some(task_handle),
+            stdin_tx: Some(stdin_tx),
+        };
+
+        // Add to registry
+        let mut sessions = self.sessions.write().await;
+        sessions.insert(session_id.clone(), handle);
+
+        info!("Child session {} started successfully", session_id);
+
+        Ok(session_id)
+    }
+
     /// Get a list of all active sessions
     pub async fn list_sessions(&self) -> Vec<SessionMetadata> {
         let sessions = self.sessions.read().await;
         sessions
             .values()
+            .map(|handle| handle.metadata.clone())
+            .collect()
+    }
+
+    /// Get child sessions of a parent
+    pub async fn get_children(&self, parent_id: &SessionId) -> Vec<SessionMetadata> {
+        let sessions = self.sessions.read().await;
+        sessions
+            .values()
+            .filter(|handle| {
+                handle.metadata.parent_id.as_ref() == Some(parent_id)
+            })
             .map(|handle| handle.metadata.clone())
             .collect()
     }

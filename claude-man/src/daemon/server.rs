@@ -53,12 +53,6 @@ impl DaemonServer {
         *self.shutdown.read().await
     }
 
-    /// Signal daemon to shutdown
-    async fn signal_shutdown(&self) {
-        let mut shutdown = self.shutdown.write().await;
-        *shutdown = true;
-    }
-
     /// Start the daemon server
     pub async fn start(&self) -> Result<()> {
         let addr = self.address();

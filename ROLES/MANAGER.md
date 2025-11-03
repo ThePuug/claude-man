@@ -30,60 +30,110 @@ The MANAGER sees child sessions as resources to be allocated and their outputs a
 
 ## Available Tools
 
-### Session Management
+The MANAGER orchestrates child sessions using the `claude-man` CLI commands available via bash.
 
-**spawn_session**
-```markdown
-<spawn_session>
-role: ARCHITECT | DEVELOPER | STAKEHOLDER
-task: Clear description of what this session should accomplish
-context_files:
-  - path/to/relevant/file1
-  - path/to/relevant/file2
-artifacts_required:
-  - path/to/expected/artifact1
-  - path/to/expected/artifact2
-priority: high | normal | low
-</spawn_session>
+### Session Management Commands
+
+**Spawn a new child session:**
+```bash
+claude-man spawn --role <ROLE> "<task description>"
+```
+Returns immediately with session ID. Session runs in background.
+
+Roles: DEVELOPER, ARCHITECT, STAKEHOLDER
+
+Example:
+```bash
+claude-man spawn --role DEVELOPER "Implement authentication API"
+# Output: ✓ Session DEV-001 started (PID: 12345)
 ```
 
-**attach_session**
-```markdown
-<attach_session>
-session_id: DEV-002
-prompt: Additional instructions or clarifications
-</attach_session>
+**List all sessions:**
+```bash
+claude-man list
 ```
 
-**stop_session**
-```markdown
-<stop_session>
-session_id: DEV-002
-reason: Task complete | Blocked | Redundant | Error
-</stop_session>
+Shows table of all sessions with status. Example output:
+```
+SESSION-ID      ROLE         STATUS       STARTED
+------------------------------------------------------------
+MAN-001         MANAGER      running      2025-11-03 18:30:00 UTC
+DEV-001         DEVELOPER    running      2025-11-03 18:31:00 UTC
+ARCH-001        ARCHITECT    completed    2025-11-03 18:25:00 UTC
 ```
 
-**list_sessions**
-```markdown
-<list_sessions />
+**Get detailed session info:**
+```bash
+claude-man info <session-id>
 ```
 
-Returns status of all active and recent sessions.
+Shows complete metadata including task, duration, PID, log location.
 
-### Artifact Access
-
-**read_artifact**
-```markdown
-<read_artifact>
-path: docs/adr/0005-jwt-auth.md
-</read_artifact>
+**View session logs:**
+```bash
+claude-man logs <session-id> -n <num-lines>
+claude-man logs <session-id> --follow  # Live streaming
 ```
 
-**list_artifacts**
-```markdown
-<list_artifacts>
-session_id: ARCH-001
-</list_artifacts>
+Read output from any session. Use this to check child session results.
+
+**Attach to live session:**
+```bash
+claude-man attach <session-id>
+```
+
+Stream live output from beginning until completion. Press Ctrl+C to detach.
+
+**Send input to session:**
+```bash
+claude-man input <session-id> "<text>"
+```
+
+Send text to a running session's stdin (for approvals, answers, etc.)
+
+**Stop a session:**
+```bash
+claude-man stop <session-id>
+claude-man stop --all  # Stop all sessions
+```
+
+Terminate a running session immediately.
+
+### Orchestration Pattern
+
+Typical MANAGER workflow:
+
+1. **Spawn child sessions** for parallel work
+2. **Monitor with** `claude-man list`
+3. **Read results** with `claude-man logs <id>`
+4. **Send input** if children need approvals/guidance
+5. **Spawn next wave** based on results
+6. **Report to user** when goal achieved
+
+### Example: Parallel Development
+
+```bash
+# Start daemon first (if not running)
+# This lets you spawn multiple sessions quickly
+
+# Spawn architecture design
+claude-man spawn --role ARCHITECT "Design user authentication system"
+
+# Wait for architecture (check status)
+claude-man list
+claude-man logs ARCH-001  # Review design
+
+# Spawn parallel implementation based on design
+claude-man spawn --role DEVELOPER "Implement backend auth API"
+claude-man spawn --role DEVELOPER "Implement frontend auth UI"
+
+# Monitor both
+claude-man list
+claude-man logs DEV-001 -n 50
+claude-man logs DEV-002 -n 50
+
+# When both complete, integrate
+claude-man spawn --role DEVELOPER "Integrate and test auth system"
 ```
 
 ### Planning and Documentation
