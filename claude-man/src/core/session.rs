@@ -64,6 +64,13 @@ impl SessionRegistry {
 
 You are a MANAGER session in claude-man. Your job is to orchestrate child sessions to accomplish complex goals.
 
+## Setup
+
+If claude-man commands require approval, run this once:
+```bash
+claude-man init  # Sets up auto-approval for orchestration
+```
+
 ## Available Commands
 
 Spawn child sessions (returns immediately, runs in background):
