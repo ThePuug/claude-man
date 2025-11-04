@@ -1,3 +1,6 @@
+> [!WARNING]
+> **END OF LIFE**: claude code's sub-agents effectively make this obsolete
+
 # claude-man
 
 **AI Session Orchestration Tool** - Manage multiple Claude AI sessions from a single CLI, enabling parallel development workflows with MANAGER-led coordination.
